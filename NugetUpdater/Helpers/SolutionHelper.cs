@@ -39,24 +39,28 @@ namespace NugetUpdater.Helpers
 
             foreach (var subDirectory in Directory.GetDirectories(solutionInfo.RelativePath))
             {
-                var projectFilePath = Directory.GetFiles(subDirectory, "*.csproj")?.FirstOrDefault();
-                if (projectFilePath != null && projectFilePath.Any())
+                var projectFiles = Directory.GetFiles(subDirectory, "*.csproj");
+                foreach (var projectFilePath in projectFiles)
                 {
-                    var projectInfo = new ProjectInfo
+                    if (projectFilePath != null && projectFilePath.Any())
                     {
-                        Name = Path.GetFileName(subDirectory),
-                        RelativePath = projectFilePath
-                    };
-                    //var (packageId, dependentPackages) = GetPackages(subDirectory);
-                    projectInfo.Id = GetProjectId(projectFilePath) ?? projectInfo.Name;
-                    //projectInfo.Packages = dependentPackages;
+                        var projectInfo = new ProjectInfo
+                        {
+                            Name = Path.GetFileNameWithoutExtension(projectFilePath),
+                            RelativePath = projectFilePath
+                        };
+                        //var (packageId, dependentPackages) = GetPackages(subDirectory);
+                        projectInfo.Id = GetProjectId(projectFilePath) ?? projectInfo.Name;
+                        //projectInfo.Packages = dependentPackages;
 
-                    var projectType = Path.GetExtension(subDirectory);
-                    if (projectInfo.IsAllowed())
-                    {
-                        solutionInfo.Projects.Add(projectInfo);
+                        var projectType = Path.GetExtension(subDirectory);
+                        if (projectInfo.IsAllowed())
+                        {
+                            solutionInfo.Projects.Add(projectInfo);
+                        }
                     }
                 }
+                
             }
             return solutionInfo;
 

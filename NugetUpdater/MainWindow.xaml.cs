@@ -27,28 +27,22 @@ namespace NugetUpdater
             InitializeComponent();
 
             var solutions = SolutionHelper.GetSolutions(WorkStationPath);
-            // Create the application's main window
-            this.Title = "Grid Sample";
-
-            // Create the Grid
-            //var directories = Directory.GetDirectories(WorkStationPath);
             var projectList = solutions.SelectMany(solution => solution.Projects).ToList();
-                
-            //    new List<string>
-            //{
-            //    @"C:\Workstation\orbitax-file-store-api_fork-shahadat\Orbitax.FileStore.Api\Orbitax.FileStore.Business",
-            //    @"C:\Workstation\orbitax-treaty-api_fork-shahadat\Orbitax.Treaty.Api\Orbitax.Treaty.Business",
-            //    @"C:\Workstation\orbitax-core-lib_fork-shahadat\Standard\Orbitax.Core.Business",
-            //    @"C:\Workstation\orbitax-file-store-api_fork-shahadat\Orbitax.FileStore.Api\Orbitax.FileStore.Api"
-            //};
-
             var projectIndex = 0;
             var projectStackPanel = new StackPanel();
+
             //projectStackPanel.Style = new Style
             //{
 
             //}
             ProjectButtons = new List<Button>();
+
+            var scrollViewer = new ScrollViewer
+            {
+                Height = 400,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+            };
+            scrollViewer.Content = projectStackPanel;
             foreach (var item in projectList)
             {
                 var button = new Button///
@@ -60,10 +54,12 @@ namespace NugetUpdater
                 button.Click += SelectProject;
                 ProjectButtons.Add(button);
                 projectStackPanel.Children.Add(button);
+                projectStackPanel.Children.Add(new Label());
+
             }
-            grid.Children.Add(projectStackPanel);
-            Grid.SetRow(projectStackPanel, 0);
-            Grid.SetColumn(projectStackPanel, 0);
+            grid.Children.Add(scrollViewer);
+            Grid.SetRow(scrollViewer, 0);
+            Grid.SetColumn(scrollViewer, 0);
             
             //AddLabels(canvas, directories.ToList(), 0, 0);
             //ProjectShow(projectDirecotry, 0);
@@ -88,7 +84,7 @@ namespace NugetUpdater
         private void ProjectShow(ProjectInfo projectInfo, int row)
         {
             grid.Children.RemoveRange(1, grid.Children.Count - 1);
-            projectInfo.Packages = GetPackageInfo(projectInfo.RelativePath);
+            (projectInfo.Version, projectInfo.Packages) = GetVersionAndPackageInfo(projectInfo.RelativePath);
             var label = new Label
             {
                 Content = projectInfo.Name,
@@ -129,7 +125,7 @@ namespace NugetUpdater
                 Content = "Update Version",
                 Tag = new Dictionary<string, object> { { "ProjectInfo", projectInfo }, { "TextBox", textBox } }
             };
-            button.Click += Button_Click;
+            button.Click += UpdateVersion;
             updateVersionStackPanel.Children.Add(button);
             grid.Children.Add(updateVersionStackPanel);
             Grid.SetRow(updateVersionStackPanel, 0);
@@ -151,7 +147,12 @@ namespace NugetUpdater
                 {
                     Name = $"updatepackage{updatePackageIndex++}",
                     Content = "Update Package",
-                    Tag = new Dictionary<string, object> { { "PackageInfo", package }, { "Directory", projectInfo.Directory } },
+                    Tag = new Dictionary<string, object>
+                    {
+                        { "PackageInfo", package },
+                        { "ProjectPath", projectInfo.RelativePath },
+                        {"Label", pklabel }
+                    }
                 };
                 updatePackageButton.Click += UpdatePackage;
                 stackPanel.Children.Add(pklabel);
@@ -169,8 +170,10 @@ namespace NugetUpdater
             var button = sender as Button;
             var dict = button.Tag as Dictionary<string, object>;
             var packageInfo = dict["PackageInfo"] as PackageInfo;
-            var directory = dict["Directory"] as string;
+            var projectPath = dict["ProjectPath"] as string;
+            var label = dict["Label"] as Label;
 
+            var directory = Path.GetDirectoryName(projectPath);
             var orbitaxNuget = "https://www.myget.org/F/orbitax-3-1/auth/a5388e02-c5ad-4ad9-a0eb-092deaee327e/api/v3/index.json";
             using (Process process = new Process())
             {
@@ -182,14 +185,36 @@ namespace NugetUpdater
                 };
                 process.Start();
                 process.WaitForExit();
-                 
                 //RedirectStandardOutput = true,
                 //CreateNoWindow = true
             };
 
+            var packageVersion = GetPackageVersion(projectPath, packageInfo.Name);
+            if(packageVersion != packageInfo.Version)
+            {
+                label.Background = new SolidColorBrush(Colors.Aqua);
+                label.Content = $"{packageInfo.Name}  {packageVersion}";
+            }
+
         }
 
-        private void Button_Click(object sender, RoutedEventArgs e)
+        private string GetPackageVersion(string projectPath, string packageName)
+        {
+            if (File.Exists(projectPath) == false)
+            {
+                throw new Exception("File not found.");
+            }
+            XDocument projDefinition = XDocument.Load(projectPath, LoadOptions.PreserveWhitespace);
+            var projectElement = projDefinition.ElementByTag("Project");
+            var itemGroups = projectElement.ElementsByTag("ItemGroup");
+            var packageReferences = itemGroups.SelectMany(itemGroup => itemGroup.ElementsByTag("PackageReference"));
+            var orbitaxPackageReferences = packageReferences.Where(package => package.Attribute("Include").Value.Contains("Orbitax"));
+            var orbitaxPackageNames = orbitaxPackageReferences.Select(x => x.Attribute("Include").Value).ToList();
+            var packageElement = orbitaxPackageReferences.FirstOrDefault(packageInfo => packageInfo.Attribute("Include").Value == packageName);
+            return packageElement.Attribute("Version").Value;
+        }
+
+        private void UpdateVersion(object sender, RoutedEventArgs e)
         {
             var button = sender as Button;
             var dict = button.Tag as Dictionary<string,object>;
@@ -197,12 +222,17 @@ namespace NugetUpdater
             var textBox = dict["TextBox"] as TextBox;
            // var consoleBox = dict["ConsoleBox"] as TextBox;
 
-            var projectRelativePath = System.IO.Path.Combine(projectInfo.Directory, projectInfo.RelativePath);
+            var projectRelativePath = System.IO.Path.Combine(projectInfo.RelativePath, projectInfo.RelativePath);
             XDocument projDefinition = XDocument.Load(projectRelativePath, LoadOptions.PreserveWhitespace);
             var projectElement = projDefinition.ElementByTag("Project");
             var propertyGroup = projectElement.ElementByTag("PropertyGroup");
 
-            var newVersion = textBox.Text;
+            var newVersion = string.Join(".", textBox.Text.Split(".").Select(x =>
+            {
+                if (int.TryParse(x, out int y))
+                    return y.ToString();
+                return x;
+            }));
             propertyGroup.SetElementValue("Version", textBox.Text);
             using (var writer = XmlWriter.Create(projectRelativePath, new XmlWriterSettings { OmitXmlDeclaration = true, Indent = true }))
             {
@@ -214,24 +244,19 @@ namespace NugetUpdater
                 StartInfo = new ProcessStartInfo
                 {
                     FileName = "CMD.exe",
-                    Arguments = string.Format(@$"/C dotnet build -c Release"),
-                    WorkingDirectory = $"{projectInfo.Directory}",
-                    UseShellExecute = false,
-                    CreateNoWindow = false,
-                    RedirectStandardOutput = false
+                    Arguments = string.Format(@$"/C dotnet build {projectInfo.Name}.csproj -c Release"),
+                    WorkingDirectory = $"{Path.GetDirectoryName(projectInfo.RelativePath)}"
                 }
             };
-
-            string temp = string.Empty;
             //process1.OutputDataReceived += (sender, e) => DoSomething(e); // use this for synchronization
             process1.Start();
             
             //process1.BeginOutputReadLine();
             process1.WaitForExit();
-
+            var projectDirectory = Path.GetDirectoryName(projectInfo.RelativePath);
             var nugetFileName = $"{projectInfo.Id}.{newVersion}.nupkg";
-            var nugetFileDirectory = $"{projectInfo.Directory}/bin/Release";
-            var nugetPath = System.IO.Path.Combine(nugetFileDirectory, nugetFileName);
+            var nugetFileDirectory = $"{projectDirectory}/bin/Release";
+            var nugetPath = Path.Combine(nugetFileDirectory, nugetFileName);
 
             if (File.Exists(nugetPath) == false)
             {
@@ -239,9 +264,15 @@ namespace NugetUpdater
             }
             using (Process process = new Process())
             {
-                process.StartInfo.FileName = "CMD.exe";
-                process.StartInfo.WorkingDirectory = $"{projectInfo.Directory}/bin/Release";
-                process.StartInfo.Arguments = string.Format(@$"/C nuget push {nugetFileName} a5388e02-c5ad-4ad9-a0eb-092deaee327e -Source https://www.myget.org/F/orbitax-3-1/api/v2/package");
+                process.StartInfo = new ProcessStartInfo
+                {
+                    FileName = "CMD.exe",
+                    Arguments = string.Format(@$"/K nuget push {nugetFileName} a5388e02-c5ad-4ad9-a0eb-092deaee327e -Source https://www.myget.org/F/orbitax-3-1/api/v2/package"),
+                    WorkingDirectory = nugetFileDirectory,
+                    //UseShellExecute = false,
+                    //CreateNoWindow = true,
+                    //RedirectStandardOutput = true
+                };
                 process.Start();
                 //process.StartInfo.ArgumentList.Add(string.Format("git push {0} {1}", remoteName, branch));
                 process.WaitForExit();
@@ -271,7 +302,7 @@ namespace NugetUpdater
             return topPosition;
         }
 
-        private List<PackageInfo> GetPackageInfo(string projectPath)
+        private Tuple<string, List<PackageInfo>> GetVersionAndPackageInfo(string projectPath)
         {
             if (File.Exists(projectPath) == false)
             {
@@ -293,7 +324,21 @@ namespace NugetUpdater
                 Name = packageInfo.Attribute("Include").Value,
                 Version = packageInfo.Attribute("Version").Value
             }).ToList();
-            return packages;
+            return Tuple.Create(version,packages);
+        }
+
+        private string GetVersion(string projectPath)
+        {
+            if (File.Exists(projectPath) == false)
+            {
+                throw new Exception("File not found.");
+            }
+            XDocument projDefinition = XDocument.Load(projectPath, LoadOptions.PreserveWhitespace);
+            var projectElement = projDefinition.ElementByTag("Project");
+            var propertyGroup = projectElement.ElementByTag("PropertyGroup");
+            var projectId = propertyGroup.ElementByTag("PackageId")?.Value;
+            var version = propertyGroup.ElementByTag("Version")?.Value;
+            return version;
         }
     }
 

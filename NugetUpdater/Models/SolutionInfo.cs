@@ -20,7 +20,6 @@ namespace NugetUpdater.Models
         public string RelativePath { get; set; }
         public List<PackageInfo> Packages { get; set; }
         public string Version { get; set; }
-        public string Directory { get; set; }
 
         //public string ParentRelativePath { get; set; }
         public ProjectInfo()
